@@ -1,0 +1,23 @@
+[Unit]
+Description=SSSDS museum dashboard agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sssds
+Group=sssds
+ExecStart=/opt/sssds/.venv/bin/python -m agent.main
+WorkingDirectory=/opt/sssds
+Restart=always
+RestartSec=3
+
+# Soft hardening — we still need sudo for shutdown, so we can't lock this
+# down further without breaking the control path.
+NoNewPrivileges=false
+ProtectSystem=strict
+ReadWritePaths=/var/lib/sssds /var/log/sssds
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

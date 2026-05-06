@@ -1,0 +1,17 @@
+[Unit]
+Description=SSSDS VLC video player
+After=graphical.target
+PartOf=graphical.target
+
+[Service]
+Type=simple
+User=sssds
+Group=sssds
+Environment=DISPLAY=:0
+ExecStart=/opt/sssds/.venv/bin/python /opt/sssds/VLC/vlc_timestamp_tool.py
+WorkingDirectory=/opt/sssds/VLC
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=graphical.target

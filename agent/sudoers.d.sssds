@@ -1,0 +1,5 @@
+# Installed to /etc/sudoers.d/sssds by provision-node.sh.
+# Scoped to exactly the three commands the agent ever runs.
+sssds ALL=(root) NOPASSWD: /sbin/shutdown -h now
+sssds ALL=(root) NOPASSWD: /sbin/shutdown -r now
+sssds ALL=(root) NOPASSWD: /bin/systemctl restart sssds-vlc.service

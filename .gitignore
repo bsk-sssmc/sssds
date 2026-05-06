@@ -1,0 +1,52 @@
+# ----- secrets and local state -----------------------------------------
+# dev/ holds the local dashboard.env (password hash, session secret,
+# agent token) and the SQLite DB. NEVER commit any of it.
+dev/
+
+# Provisioned config files on real nodes also live outside the repo,
+# but if anyone tests by symlinking them in, ignore those too.
+*.env
+*.env.*
+!*.env.example
+
+# Local SQLite databases.
+*.db
+*.db-wal
+*.db-shm
+
+# ----- python ----------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments.
+.venv/
+venv/
+env/
+ENV/
+
+# ----- vlc tool output -------------------------------------------------
+# timestamps.txt is regenerated each run.
+VLC/timestamps.txt
+
+# ----- editors / OS ---------------------------------------------------
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.cache/
+
+# ----- misc -----------------------------------------------------------
+*.log
+*.bak
+*.tmp

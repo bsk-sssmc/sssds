@@ -1,0 +1,22 @@
+[Unit]
+Description=SSSDS museum dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sssds
+Group=sssds
+WorkingDirectory=/opt/sssds
+EnvironmentFile=/etc/sssds/dashboard.env
+ExecStart=/opt/sssds/.venv/bin/uvicorn dashboard.main:app --host ${SSSDS_BIND_HOST} --port ${SSSDS_BIND_PORT}
+Restart=always
+RestartSec=3
+
+ProtectSystem=strict
+ReadWritePaths=/var/lib/sssds /var/log/sssds
+ProtectHome=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

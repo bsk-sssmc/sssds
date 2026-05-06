@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Sign in — SSSDS{% endblock %}
+{% block body %}
+<div class="login-wrap">
+  <form class="login" method="post" action="/login">
+    <h1>SSSDS</h1>
+    <p class="muted">Museum control dashboard</p>
+    <input
+      type="password"
+      name="password"
+      placeholder="Admin password"
+      autofocus
+      required>
+    <button type="submit">Sign in</button>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  </form>
+</div>
+{% endblock %}

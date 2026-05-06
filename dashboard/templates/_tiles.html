@@ -1,0 +1,39 @@
+{% if not nodes %}
+  <p class="empty">No nodes have ever connected. Once an agent registers it
+    will appear here automatically.</p>
+{% endif %}
+{% for n in nodes %}
+  <article class="tile state-{{ n.state }}">
+    <div class="tile-head">
+      <span class="dot" aria-label="{{ n.state }}"></span>
+      <h2>zone {{ n.zone }} · node {{ n.node }}</h2>
+    </div>
+    <dl>
+      <dt>state</dt><dd>{{ n.state }}</dd>
+      <dt>ip</dt><dd>{{ n.ip or "—" }}</dd>
+      <dt>last seen</dt><dd>{{ n.last_seen_human }}</dd>
+      <dt>mac</dt><dd class="mono">{{ n.mac or "—" }}</dd>
+    </dl>
+    <div class="actions">
+      <button class="wake"
+              hx-post="/api/nodes/{{ n.key }}/wake"
+              hx-swap="none"
+              {% if n.state == "online" %}disabled{% endif %}>Wake</button>
+      <button
+              hx-post="/api/nodes/{{ n.key }}/restart-video"
+              hx-swap="none"
+              hx-confirm="Restart the video on {{ n.key }}?"
+              {% if n.state != "online" %}disabled{% endif %}>Restart video</button>
+      <button
+              hx-post="/api/nodes/{{ n.key }}/restart"
+              hx-swap="none"
+              hx-confirm="Reboot {{ n.key }}?"
+              {% if n.state != "online" %}disabled{% endif %}>Reboot</button>
+      <button class="danger"
+              hx-post="/api/nodes/{{ n.key }}/shutdown"
+              hx-swap="none"
+              hx-confirm="Shut down {{ n.key }}? It will need a Wake to come back."
+              {% if n.state != "online" %}disabled{% endif %}>Shutdown</button>
+    </div>
+  </article>
+{% endfor %}

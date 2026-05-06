@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+# Binary-ish things shouldn't be touched.
+*.png  binary
+*.jpg  binary
+*.gif  binary
+*.ico  binary
+*.mov  binary
+*.mp4  binary
