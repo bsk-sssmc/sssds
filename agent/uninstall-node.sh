@@ -39,6 +39,12 @@ echo "==> removing auto-login drop-ins"
 rm -f /etc/sddm.conf.d/10-sssds-autologin.conf
 rm -f /etc/lightdm/lightdm.conf.d/12-sssds-autologin.conf
 
+echo "==> reverting GRUB silencing"
+rm -f /etc/default/grub.d/99-sssds-quiet.cfg
+if command -v update-grub >/dev/null 2>&1; then
+  update-grub || true
+fi
+
 echo "==> removing install / state / log directories"
 rm -rf /etc/sssds /var/lib/sssds /var/log/sssds /opt/sssds
 

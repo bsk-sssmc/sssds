@@ -213,7 +213,13 @@ EOF
 configure_autologin
 
 # ---------------------------------------------------------------------------
-# 9. enable services
+# 9. silent GRUB (kiosk shouldn't show a boot menu)
+# ---------------------------------------------------------------------------
+echo "==> silencing GRUB menu"
+"${INSTALL_DIR}/agent/grub-quiet.sh"
+
+# ---------------------------------------------------------------------------
+# 10. enable services
 # ---------------------------------------------------------------------------
 echo "==> enabling services"
 systemctl enable --now sssds-wol.service
