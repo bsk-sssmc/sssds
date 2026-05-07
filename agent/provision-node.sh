@@ -2,13 +2,23 @@
 # provision-node.sh — turn a fresh Lubuntu install into a SSSDS client node.
 #
 # Usage:
-#   sudo ./provision-node.sh ZONE NODE DASHBOARD_HOST AGENT_TOKEN
+#   sudo ./provision-node.sh ZONE NODE DASHBOARD_HOST AGENT_TOKEN [VIDEO_PATH]
 #
 # Example:
-#   sudo ./provision-node.sh 1 3 192.168.1.10:8080 abc123
+#   sudo ./provision-node.sh 1 3 192.168.1.10:8080 abc123 \
+#        /home/sssds/Videos/zone1-node3.mov
 #
-# Idempotent: re-running with the same args updates identity and refreshes
-# the install. Run from inside the cloned sssds/ repo.
+# Behaviour:
+#   - Creates the `sssds` user as a regular (non-system) user with a
+#     graphical session, and enables display-manager auto-login as that
+#     user. On boot the box logs in, X comes up, and the VLC unit waits
+#     for the display before launching.
+#   - Drops all node config into /etc/sssds/identity.conf (consumed by
+#     both the agent and the VLC systemd unit via EnvironmentFile=).
+#   - VIDEO_PATH is optional. If given, the VLC service is enabled. If
+#     omitted, the unit is installed but stays disabled — set the path
+#     later by re-running this script (or editing identity.conf and
+#     running `systemctl enable --now sssds-vlc`).
 
 set -euo pipefail
 
@@ -17,13 +27,14 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-if [[ $# -ne 4 ]]; then
+if [[ $# -lt 4 || $# -gt 5 ]]; then
   cat >&2 <<EOF
-usage: $0 ZONE NODE DASHBOARD_HOST AGENT_TOKEN
+usage: $0 ZONE NODE DASHBOARD_HOST AGENT_TOKEN [VIDEO_PATH]
   ZONE             integer zone id (e.g. 1)
   NODE             integer node id within the zone (e.g. 3)
   DASHBOARD_HOST   host:port of the dashboard (e.g. 192.168.1.10:8080)
   AGENT_TOKEN      shared token from the dashboard's SSSDS_AGENT_TOKEN
+  VIDEO_PATH       (optional) absolute path to the video file for this node
 EOF
   exit 2
 fi
@@ -32,87 +43,193 @@ ZONE="$1"
 NODE="$2"
 DASHBOARD_HOST="$3"
 AGENT_TOKEN="$4"
+VIDEO_PATH="${5:-}"
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 INSTALL_DIR="/opt/sssds"
 CONFIG_DIR="/etc/sssds"
 STATE_DIR="/var/lib/sssds"
 LOG_DIR="/var/log/sssds"
+USER_HOME="/home/sssds"
 
+# ---------------------------------------------------------------------------
+# 1. apt deps
+# ---------------------------------------------------------------------------
 echo "==> installing apt dependencies"
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
   python3 python3-venv python3-pip \
   ethtool iproute2 \
   vlc python3-vlc \
+  x11-xserver-utils \
+  rsync sudo \
   >/dev/null
 
-echo "==> creating sssds user"
-if ! id sssds >/dev/null 2>&1; then
-  useradd --system --create-home --home-dir /home/sssds --shell /bin/bash sssds
-fi
-# Allow the user to talk to the X session so the VLC service can render.
-usermod -aG video,audio sssds || true
+# ---------------------------------------------------------------------------
+# 2. user account (must be a regular user with a graphical session)
+# ---------------------------------------------------------------------------
+echo "==> ensuring sssds user"
+if id sssds >/dev/null 2>&1; then
+  uid=$(id -u sssds)
+  if [[ ${uid} -lt 1000 ]]; then
+    cat >&2 <<EOF
 
+ERROR: existing 'sssds' user is a system account (UID=${uid}).
+This installer now needs sssds as a regular user with a graphical
+session, so the auto-login + VLC kiosk path can work.
+
+To migrate (DESTROYS the old account's home dir):
+    sudo systemctl stop  sssds-agent.service sssds-vlc.service 2>/dev/null || true
+    sudo systemctl disable sssds-agent.service sssds-vlc.service 2>/dev/null || true
+    sudo userdel -r sssds
+Then re-run this script.
+
+EOF
+    exit 1
+  fi
+else
+  useradd --create-home --home-dir "${USER_HOME}" --shell /bin/bash sssds
+  # Lock the password — we don't want SSH/TTY login as this user. The
+  # display manager's auto-login path doesn't need a password.
+  passwd -l sssds >/dev/null
+fi
+# Audio/video device groups are mandatory for VLC playback.
+usermod -aG video,audio,plugdev sssds || true
+
+# ---------------------------------------------------------------------------
+# 3. file layout
+# ---------------------------------------------------------------------------
 echo "==> syncing files into ${INSTALL_DIR}"
 mkdir -p "${INSTALL_DIR}" "${STATE_DIR}" "${LOG_DIR}"
-# Use rsync if present, else cp. We exclude __pycache__ and the venv.
 if command -v rsync >/dev/null; then
   rsync -a --delete \
     --exclude '__pycache__' --exclude '.venv' --exclude '.git' \
+    --exclude 'dev/' \
     "${REPO_DIR}/" "${INSTALL_DIR}/"
 else
   cp -a "${REPO_DIR}/." "${INSTALL_DIR}/"
 fi
 chown -R sssds:sssds "${INSTALL_DIR}" "${STATE_DIR}" "${LOG_DIR}"
 
+# ---------------------------------------------------------------------------
+# 4. python venv with both agent and VLC deps
+# ---------------------------------------------------------------------------
 echo "==> creating Python venv"
 sudo -u sssds python3 -m venv "${INSTALL_DIR}/.venv"
 sudo -u sssds "${INSTALL_DIR}/.venv/bin/pip" install --quiet --upgrade pip
-# Install both the agent and the VLC tool's deps into the same venv.
-# pyobjc lines in VLC/requirements.txt are no-ops on Linux thanks to the
-# sys_platform marker.
 sudo -u sssds "${INSTALL_DIR}/.venv/bin/pip" install --quiet \
   -r "${INSTALL_DIR}/agent/requirements.txt" \
   -r "${INSTALL_DIR}/VLC/requirements.txt"
 
-echo "==> writing identity to ${CONFIG_DIR}/identity.conf"
+# ---------------------------------------------------------------------------
+# 5. /etc/sssds/identity.conf
+#    Single source of truth. systemd will source it as an EnvironmentFile
+#    for both units; the agent parses it directly.
+# ---------------------------------------------------------------------------
+echo "==> writing ${CONFIG_DIR}/identity.conf"
 mkdir -p "${CONFIG_DIR}"
-cat > "${CONFIG_DIR}/identity.conf" <<EOF
-# Generated by provision-node.sh on $(date -Iseconds)
-zone=${ZONE}
-node=${NODE}
-dashboard_url=ws://${DASHBOARD_HOST}/ws/agent
-token=${AGENT_TOKEN}
-EOF
+{
+  echo "# Generated by provision-node.sh on $(date -Iseconds)"
+  echo "SSSDS_ZONE=${ZONE}"
+  echo "SSSDS_NODE=${NODE}"
+  echo "SSSDS_DASHBOARD_URL=ws://${DASHBOARD_HOST}/ws/agent"
+  echo "SSSDS_TOKEN=${AGENT_TOKEN}"
+  if [[ -n "${VIDEO_PATH}" ]]; then
+    echo "SSSDS_VIDEO_PATH=${VIDEO_PATH}"
+  fi
+} > "${CONFIG_DIR}/identity.conf"
 chown root:sssds "${CONFIG_DIR}/identity.conf"
 chmod 640 "${CONFIG_DIR}/identity.conf"
 
+# ---------------------------------------------------------------------------
+# 6. sudoers rule
+# ---------------------------------------------------------------------------
 echo "==> installing sudoers rule"
 install -m 0440 -o root -g root \
   "${INSTALL_DIR}/agent/sudoers.d.sssds" /etc/sudoers.d/sssds
 visudo -c -q -f /etc/sudoers.d/sssds
 
+# ---------------------------------------------------------------------------
+# 7. systemd units
+# ---------------------------------------------------------------------------
 echo "==> installing systemd units"
 install -m 0644 "${INSTALL_DIR}/agent/systemd/sssds-agent.service" /etc/systemd/system/
 install -m 0644 "${INSTALL_DIR}/agent/systemd/sssds-vlc.service"   /etc/systemd/system/
 install -m 0644 "${INSTALL_DIR}/agent/systemd/sssds-wol.service"   /etc/systemd/system/
 systemctl daemon-reload
 
+# ---------------------------------------------------------------------------
+# 8. display-manager auto-login
+#    Lubuntu ships SDDM by default since 18.10. We also handle LightDM
+#    in case someone swapped the DM out.
+# ---------------------------------------------------------------------------
+configure_autologin() {
+  local sess
+  # Pick the first available xsession; lxqt is the Lubuntu default.
+  for candidate in lxqt LXQt openbox lubuntu; do
+    if [[ -f /usr/share/xsessions/${candidate}.desktop ]]; then
+      sess="${candidate}"
+      break
+    fi
+  done
+  if [[ -z "${sess:-}" ]]; then
+    sess="$(basename -s .desktop "$(ls /usr/share/xsessions/*.desktop 2>/dev/null | head -1)" 2>/dev/null || true)"
+  fi
+  if [[ -z "${sess:-}" ]]; then
+    echo "  warning: no xsession found; auto-login session left blank"
+    sess=""
+  fi
+
+  if dpkg -l sddm 2>/dev/null | grep -q '^ii'; then
+    echo "==> configuring SDDM auto-login as sssds (session=${sess})"
+    mkdir -p /etc/sddm.conf.d
+    cat > /etc/sddm.conf.d/10-sssds-autologin.conf <<EOF
+[Autologin]
+User=sssds
+Session=${sess}.desktop
+EOF
+  elif dpkg -l lightdm 2>/dev/null | grep -q '^ii'; then
+    echo "==> configuring LightDM auto-login as sssds"
+    mkdir -p /etc/lightdm/lightdm.conf.d
+    cat > /etc/lightdm/lightdm.conf.d/12-sssds-autologin.conf <<EOF
+[Seat:*]
+autologin-user=sssds
+autologin-user-timeout=0
+autologin-session=${sess}
+EOF
+  else
+    echo "  warning: no SDDM or LightDM detected; configure auto-login manually"
+  fi
+}
+configure_autologin
+
+# ---------------------------------------------------------------------------
+# 9. enable services
+# ---------------------------------------------------------------------------
 echo "==> enabling services"
 systemctl enable --now sssds-wol.service
 systemctl enable --now sssds-agent.service
-# NOTE: sssds-vlc.service is installed but NOT enabled here. The default
-# VIDEO_PATH in vlc_timestamp_tool.py points at the dev machine — enable
-# this service per-node only after you've placed the right video file
-# and updated the path:
-#     sudoedit /opt/sssds/VLC/vlc_timestamp_tool.py     # set VIDEO_PATH
-#     sudo systemctl enable --now sssds-vlc.service
 
-echo
-echo "Done. Node identity: zone-${ZONE}-node-${NODE}"
-echo "Tail the agent log with:"
-echo "    journalctl -u sssds-agent -f"
-echo
-echo "Next: set VIDEO_PATH in /opt/sssds/VLC/vlc_timestamp_tool.py and run"
-echo "    sudo systemctl enable --now sssds-vlc.service"
+if [[ -n "${VIDEO_PATH}" ]]; then
+  if [[ ! -f "${VIDEO_PATH}" ]]; then
+    echo "  warning: VIDEO_PATH ${VIDEO_PATH} does not exist yet; service enabled but it will fail until the file is in place"
+  fi
+  systemctl enable sssds-vlc.service
+  # Restart so config changes (or first-time start) take effect; safe whether
+  # the unit was already running or not.
+  systemctl restart sssds-vlc.service || true
+else
+  echo "  no VIDEO_PATH given — sssds-vlc.service installed but disabled."
+  echo "  Re-run this script with the video path as the 5th argument when ready."
+fi
+
+cat <<EOF
+
+Done. Node identity: zone-${ZONE}-node-${NODE}
+Auto-login is configured; reboot to verify the kiosk session comes up.
+
+Useful commands:
+    journalctl -u sssds-agent -f
+    journalctl -u sssds-vlc -n 50
+    systemctl status sssds-vlc
+EOF

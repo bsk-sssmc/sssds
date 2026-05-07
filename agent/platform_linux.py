@@ -95,4 +95,6 @@ async def restart() -> tuple[bool, str]:
 
 
 async def restart_video() -> tuple[bool, str]:
-    return await _run("sudo", "-n", "/bin/systemctl", "restart", VLC_UNIT)
+    # /usr/bin/systemctl is the real binary on every modern Ubuntu/Lubuntu;
+    # sudoers also accepts /bin/systemctl for older layouts.
+    return await _run("sudo", "-n", "/usr/bin/systemctl", "restart", VLC_UNIT)

@@ -70,7 +70,13 @@ def load_config(path: str) -> dict:
             if "=" not in line:
                 continue
             k, v = line.split("=", 1)
-            out[k.strip().lower()] = v.strip()
+            key = k.strip().lower()
+            # The same file is consumed by systemd as an EnvironmentFile,
+            # so its keys are SSSDS_ZONE / SSSDS_NODE / .... Strip that
+            # prefix so the agent's view stays plain (zone, node, ...).
+            if key.startswith("sssds_"):
+                key = key[len("sssds_"):]
+            out[key] = v.strip().strip('"').strip("'")
     missing = REQUIRED_KEYS - out.keys()
     if missing:
         raise SystemExit(f"{path}: missing keys: {sorted(missing)}")

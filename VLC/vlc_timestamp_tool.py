@@ -48,18 +48,23 @@ except OSError as exc:  # libvlc failed to load (most often: arch mismatch on ma
 # Configuration -- edit these values, then just run `python vlc_timestamp_tool.py`
 # ---------------------------------------------------------------------------
 
-# Absolute or relative path to the video file you want to play.
-VIDEO_PATH = "/Volumes/1431/VANDANAM FINAL 4k.mov"
+# Configuration is environment-driven so the same script runs on every
+# node with a different video. The defaults below are only used when
+# the env vars aren't set (e.g. when running directly from a dev shell).
+#
+# On a provisioned node the systemd unit pulls these out of
+# /etc/sssds/identity.conf via EnvironmentFile=.
 
-# File where captured timestamps will be written on exit.
-OUTPUT_FILE = "timestamps.txt"
+VIDEO_PATH = os.environ.get(
+    "SSSDS_VIDEO_PATH", "/Volumes/1431/VANDANAM FINAL 4k.mov"
+)
 
-# Start playback in fullscreen. Press 'f' at runtime to toggle.
-FULLSCREEN = True
+OUTPUT_FILE = os.environ.get("SSSDS_OUTPUT_FILE", "timestamps.txt")
 
-# Also accept ENTER on the terminal as a capture trigger (in addition to
-# pressing 't' on the video window).
-ENTER_CAPTURES = True
+FULLSCREEN = os.environ.get("SSSDS_FULLSCREEN", "1").lower() not in ("0", "false", "no")
+
+# Disable terminal stdin trigger when running headless (via systemd).
+ENTER_CAPTURES = os.environ.get("SSSDS_ENTER_CAPTURES", "1").lower() not in ("0", "false", "no")
 
 # Initial windowed size (used when FULLSCREEN is False).
 WINDOW_WIDTH = 1280
