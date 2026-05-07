@@ -425,10 +425,22 @@ def run_tk(controller: Controller, fullscreen: bool, enter_captures: bool) -> in
         # earlier; it broke libvlc's X-window embedding (player would play
         # for ~2s and bail). The standard _NET_WM_STATE_FULLSCREEN hint
         # gets us a borderless full-screen window AND keeps libvlc happy.
-        root.attributes("-fullscreen", True)
-        root.attributes("-topmost", True)
-        root.update_idletasks()
-        root.lift()
+        def assert_fullscreen(remaining: int = 30) -> None:
+            try:
+                root.attributes("-fullscreen", True)
+                root.attributes("-topmost", True)
+                root.update_idletasks()
+                root.lift()
+            except Exception:
+                pass
+            # The WM (openbox under LXQt) sometimes finishes starting
+            # AFTER our window is mapped, in which case the first
+            # fullscreen request is dropped. Re-assert once a second for
+            # the first half-minute so a late-arriving WM still picks it
+            # up. Cheap, idempotent.
+            if remaining > 0:
+                root.after(1000, lambda: assert_fullscreen(remaining - 1))
+        assert_fullscreen()
     video_frame.configure(cursor="none")
 
     def quit_app() -> None:

@@ -111,6 +111,19 @@ for _ in $(seq 1 60); do
     sleep 1
 done
 
+# Wait up to 30s for a window manager owned by us. If we exec Python
+# before the WM is up, Tk's -fullscreen request gets dropped and the
+# video starts in a small window. (This is the boot-time fullscreen
+# bug; manual restart doesn't hit it because the WM is already up.)
+for _ in $(seq 1 30); do
+    for wm in openbox mutter kwin_x11 awesome xfwm4 i3 marco metacity; do
+        if pgrep -u "$ME_UID" -x "$wm" >/dev/null 2>&1; then
+            break 2
+        fi
+    done
+    sleep 1
+done
+
 # Wait up to 60s for a working XAUTHORITY. Re-resolves on each tick because
 # auto-login may take several seconds to spawn the session leader after X
 # itself comes up.
