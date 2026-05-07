@@ -155,8 +155,33 @@ class Controller:
         self._closed = False
 
         self.instance, self.player = build_player()
-        media = self.instance.media_new(video_path)
-        self.player.set_media(media)
+        self.media = self.instance.media_new(video_path)
+        # Hint libvlc to repeat. Belt-and-braces: combined with the
+        # MediaPlayerEndReached handler below, the video loops even on
+        # container formats where input-repeat is silently ignored.
+        self.media.add_option(":input-repeat=65535")
+        self.player.set_media(self.media)
+
+        em = self.player.event_manager()
+        em.event_attach(vlc.EventType.MediaPlayerEndReached, self._on_end)
+
+    # libvlc forbids calling stop()/play() from inside its event
+    # callback thread, so the handler hands the actual restart to a
+    # one-shot timer that runs on a normal thread.
+    def _on_end(self, _event) -> None:
+        if self._closed:
+            return
+        threading.Timer(0.05, self._replay).start()
+
+    def _replay(self) -> None:
+        if self._closed:
+            return
+        try:
+            self.player.stop()
+            self.player.set_media(self.media)
+            self.player.play()
+        except Exception as e:
+            print(f"replay failed: {e}", file=sys.stderr)
 
     # -- playback ---------------------------------------------------------
 
@@ -396,21 +421,14 @@ def run_tk(controller: Controller, fullscreen: bool, enter_captures: bool) -> in
         controller.player.set_xwindow(handle)
 
     if fullscreen:
-        # Belt-and-braces kiosk-mode fullscreen:
-        #   overrideredirect: WM stops managing this window entirely (no
-        #     decorations, doesn't get stacked under panels)
-        #   explicit screen geometry: covers every pixel
-        #   -topmost: even if the WM ignores overrideredirect, stay on
-        #     top of any LXQt panel
-        screen_w = root.winfo_screenwidth()
-        screen_h = root.winfo_screenheight()
-        root.overrideredirect(True)
-        root.geometry(f"{screen_w}x{screen_h}+0+0")
+        # Plain WM-managed fullscreen + topmost. We tried overrideredirect
+        # earlier; it broke libvlc's X-window embedding (player would play
+        # for ~2s and bail). The standard _NET_WM_STATE_FULLSCREEN hint
+        # gets us a borderless full-screen window AND keeps libvlc happy.
         root.attributes("-fullscreen", True)
         root.attributes("-topmost", True)
         root.update_idletasks()
         root.lift()
-        root.focus_force()
     video_frame.configure(cursor="none")
 
     def quit_app() -> None:
@@ -447,16 +465,9 @@ def run_tk(controller: Controller, fullscreen: bool, enter_captures: bool) -> in
     if not controller.play():
         return 2
 
-    def poll_eom() -> None:
-        if controller._closed:
-            return
-        if controller.is_ended():
-            print("-- end of media --")
-            quit_app()
-            return
-        root.after(500, poll_eom)
-
-    root.after(500, poll_eom)
+    # Kiosk mode never quits on end-of-media — the controller's
+    # MediaPlayerEndReached handler restarts playback. Only explicit
+    # 'q' / ESC / window-close / Ctrl-C ends the loop.
 
     if enter_captures:
         def stdin_listener() -> None:
