@@ -13,17 +13,14 @@ Group=sssds
 # half-provisioned box.
 EnvironmentFile=-/etc/sssds/identity.conf
 Environment=DISPLAY=:0
-Environment=XAUTHORITY=/home/sssds/.Xauthority
 WorkingDirectory=/opt/sssds/VLC
 
-# Block until the X server actually accepts connections (auto-login can
-# lag a few seconds behind graphical.target). Cap at 60s so a missing
-# display manager doesn't pin the unit forever.
-ExecStart=/bin/sh -c 'for i in $(seq 1 60); do xset -display :0 q >/dev/null 2>&1 && break; sleep 1; done; exec /opt/sssds/.venv/bin/python /opt/sssds/VLC/vlc_timestamp_tool.py'
+# The wrapper waits for X, discovers the right XAUTHORITY (display
+# managers don't agree on where the cookie lives), then execs Python.
+ExecStart=/opt/sssds/agent/start-vlc.sh
 
 Restart=on-failure
 RestartSec=5
-# Don't restart-loop forever if something is fundamentally broken.
 StartLimitIntervalSec=300
 StartLimitBurst=5
 
