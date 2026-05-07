@@ -1,7 +1,0 @@
-# Installed to /etc/sudoers.d/sssds by provision-node.sh.
-# Scoped to exactly the commands the agent runs. Both the legacy /sbin
-# and /bin paths and their /usr-merged counterparts are listed so the
-# rule matches regardless of how the agent invokes them.
-sssds ALL=(root) NOPASSWD: /sbin/shutdown -h now, /usr/sbin/shutdown -h now
-sssds ALL=(root) NOPASSWD: /sbin/shutdown -r now, /usr/sbin/shutdown -r now
-sssds ALL=(root) NOPASSWD: /bin/systemctl restart sssds-vlc.service, /usr/bin/systemctl restart sssds-vlc.service

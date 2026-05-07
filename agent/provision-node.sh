@@ -1,24 +1,16 @@
 #!/usr/bin/env bash
-# provision-node.sh — turn a fresh Lubuntu install into a SSSDS client node.
+# provision-node.sh — set up the SSSDS client agent + VLC kiosk on this
+# machine, running everything as the *current desktop user*.
 #
 # Usage:
 #   sudo ./provision-node.sh ZONE NODE DASHBOARD_HOST AGENT_TOKEN [VIDEO_PATH]
 #
-# Example:
-#   sudo ./provision-node.sh 1 3 192.168.1.10:8080 abc123 \
-#        /home/sssds/Videos/zone1-node3.mov
+# Run this from a terminal opened by the user the kiosk should run as.
+# The script reads $SUDO_USER to identify them, so it must be invoked
+# via 'sudo' from a regular shell — not from a root login.
 #
-# Behaviour:
-#   - Creates the `sssds` user as a regular (non-system) user with a
-#     graphical session, and enables display-manager auto-login as that
-#     user. On boot the box logs in, X comes up, and the VLC unit waits
-#     for the display before launching.
-#   - Drops all node config into /etc/sssds/identity.conf (consumed by
-#     both the agent and the VLC systemd unit via EnvironmentFile=).
-#   - VIDEO_PATH is optional. If given, the VLC service is enabled. If
-#     omitted, the unit is installed but stays disabled — set the path
-#     later by re-running this script (or editing identity.conf and
-#     running `systemctl enable --now sssds-vlc`).
+# Idempotent: re-running with new args refreshes config, sudoers, and
+# unit files for the same user.
 
 set -euo pipefail
 
@@ -27,22 +19,46 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# resolve the target user
+# ---------------------------------------------------------------------------
+NODE_USER="${SUDO_USER:-}"
+if [[ -z "${NODE_USER}" || "${NODE_USER}" == "root" ]]; then
+  cat >&2 <<EOF
+ERROR: this script needs to know which desktop user runs the kiosk, so it
+       must be invoked via 'sudo' from a regular login (not from a root
+       shell). \$SUDO_USER was empty or 'root'.
+EOF
+  exit 1
+fi
+
+if ! id "${NODE_USER}" >/dev/null 2>&1; then
+  echo "ERROR: user '${NODE_USER}' does not exist" >&2
+  exit 1
+fi
+NODE_UID="$(id -u "${NODE_USER}")"
+if [[ ${NODE_UID} -lt 1000 ]]; then
+  echo "ERROR: ${NODE_USER} (UID=${NODE_UID}) is a system user; need a regular desktop user" >&2
+  exit 1
+fi
+NODE_HOME="$(getent passwd "${NODE_USER}" | cut -d: -f6)"
+NODE_GROUP="$(id -gn "${NODE_USER}")"
+
+# ---------------------------------------------------------------------------
+# args
+# ---------------------------------------------------------------------------
 if [[ $# -lt 4 || $# -gt 5 ]]; then
   cat >&2 <<EOF
-usage: $0 ZONE NODE DASHBOARD_HOST AGENT_TOKEN [VIDEO_PATH]
+usage: sudo $0 ZONE NODE DASHBOARD_HOST AGENT_TOKEN [VIDEO_PATH]
   ZONE             integer zone id (e.g. 1)
   NODE             integer node id within the zone (e.g. 3)
   DASHBOARD_HOST   host:port of the dashboard (e.g. 192.168.1.10:8080)
   AGENT_TOKEN      shared token from the dashboard's SSSDS_AGENT_TOKEN
-  VIDEO_PATH       (optional) absolute path to the video file for this node
+  VIDEO_PATH       (optional) absolute path to this node's video file
 EOF
   exit 2
 fi
-
-ZONE="$1"
-NODE="$2"
-DASHBOARD_HOST="$3"
-AGENT_TOKEN="$4"
+ZONE="$1"; NODE="$2"; DASHBOARD_HOST="$3"; AGENT_TOKEN="$4"
 VIDEO_PATH="${5:-}"
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -50,7 +66,6 @@ INSTALL_DIR="/opt/sssds"
 CONFIG_DIR="/etc/sssds"
 STATE_DIR="/var/lib/sssds"
 LOG_DIR="/var/log/sssds"
-USER_HOME="/home/sssds"
 
 # ---------------------------------------------------------------------------
 # 1. apt deps
@@ -66,35 +81,9 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
   >/dev/null
 
 # ---------------------------------------------------------------------------
-# 2. user account (must be a regular user with a graphical session)
+# 2. groups (so VLC can talk to the audio/video stack)
 # ---------------------------------------------------------------------------
-echo "==> ensuring sssds user"
-if id sssds >/dev/null 2>&1; then
-  uid=$(id -u sssds)
-  if [[ ${uid} -lt 1000 ]]; then
-    cat >&2 <<EOF
-
-ERROR: existing 'sssds' user is a system account (UID=${uid}).
-This installer now needs sssds as a regular user with a graphical
-session, so the auto-login + VLC kiosk path can work.
-
-To migrate (DESTROYS the old account's home dir):
-    sudo systemctl stop  sssds-agent.service sssds-vlc.service 2>/dev/null || true
-    sudo systemctl disable sssds-agent.service sssds-vlc.service 2>/dev/null || true
-    sudo userdel -r sssds
-Then re-run this script.
-
-EOF
-    exit 1
-  fi
-else
-  useradd --create-home --home-dir "${USER_HOME}" --shell /bin/bash sssds
-  # Lock the password — we don't want SSH/TTY login as this user. The
-  # display manager's auto-login path doesn't need a password.
-  passwd -l sssds >/dev/null
-fi
-# Audio/video device groups are mandatory for VLC playback.
-usermod -aG video,audio,plugdev sssds || true
+usermod -aG video,audio,plugdev "${NODE_USER}" || true
 
 # ---------------------------------------------------------------------------
 # 3. file layout
@@ -109,22 +98,20 @@ if command -v rsync >/dev/null; then
 else
   cp -a "${REPO_DIR}/." "${INSTALL_DIR}/"
 fi
-chown -R sssds:sssds "${INSTALL_DIR}" "${STATE_DIR}" "${LOG_DIR}"
+chown -R "${NODE_USER}:${NODE_GROUP}" "${INSTALL_DIR}" "${STATE_DIR}" "${LOG_DIR}"
 
 # ---------------------------------------------------------------------------
-# 4. python venv with both agent and VLC deps
+# 4. python venv (agent + VLC deps)
 # ---------------------------------------------------------------------------
 echo "==> creating Python venv"
-sudo -u sssds python3 -m venv "${INSTALL_DIR}/.venv"
-sudo -u sssds "${INSTALL_DIR}/.venv/bin/pip" install --quiet --upgrade pip
-sudo -u sssds "${INSTALL_DIR}/.venv/bin/pip" install --quiet \
+sudo -u "${NODE_USER}" python3 -m venv "${INSTALL_DIR}/.venv"
+sudo -u "${NODE_USER}" "${INSTALL_DIR}/.venv/bin/pip" install --quiet --upgrade pip
+sudo -u "${NODE_USER}" "${INSTALL_DIR}/.venv/bin/pip" install --quiet \
   -r "${INSTALL_DIR}/agent/requirements.txt" \
   -r "${INSTALL_DIR}/VLC/requirements.txt"
 
 # ---------------------------------------------------------------------------
 # 5. /etc/sssds/identity.conf
-#    Single source of truth. systemd will source it as an EnvironmentFile
-#    for both units; the agent parses it directly.
 # ---------------------------------------------------------------------------
 echo "==> writing ${CONFIG_DIR}/identity.conf"
 mkdir -p "${CONFIG_DIR}"
@@ -138,67 +125,89 @@ mkdir -p "${CONFIG_DIR}"
     echo "SSSDS_VIDEO_PATH=${VIDEO_PATH}"
   fi
 } > "${CONFIG_DIR}/identity.conf"
-chown root:sssds "${CONFIG_DIR}/identity.conf"
+chown "root:${NODE_GROUP}" "${CONFIG_DIR}/identity.conf"
 chmod 640 "${CONFIG_DIR}/identity.conf"
 
 # ---------------------------------------------------------------------------
-# 6. sudoers rule
+# 6. sudoers — generated for THIS user, validated before install
 # ---------------------------------------------------------------------------
-echo "==> installing sudoers rule"
-install -m 0440 -o root -g root \
-  "${INSTALL_DIR}/agent/sudoers.d.sssds" /etc/sudoers.d/sssds
-visudo -c -q -f /etc/sudoers.d/sssds
+echo "==> installing sudoers rule for ${NODE_USER}"
+TMP_SUDOERS="$(mktemp)"
+trap 'rm -f "${TMP_SUDOERS}"' EXIT
+cat > "${TMP_SUDOERS}" <<EOF
+# Generated by provision-node.sh — scoped to commands the agent runs.
+${NODE_USER} ALL=(root) NOPASSWD: /sbin/shutdown -h now, /usr/sbin/shutdown -h now
+${NODE_USER} ALL=(root) NOPASSWD: /sbin/shutdown -r now, /usr/sbin/shutdown -r now
+${NODE_USER} ALL=(root) NOPASSWD: /bin/systemctl restart sssds-vlc.service, /usr/bin/systemctl restart sssds-vlc.service
+EOF
+chmod 0440 "${TMP_SUDOERS}"
+chown root:root "${TMP_SUDOERS}"
+visudo -c -q -f "${TMP_SUDOERS}"
+install -m 0440 -o root -g root "${TMP_SUDOERS}" /etc/sudoers.d/sssds
 
 # ---------------------------------------------------------------------------
-# 7. systemd units
+# 7. systemd units (substitute placeholders)
 # ---------------------------------------------------------------------------
 echo "==> installing systemd units"
-install -m 0644 "${INSTALL_DIR}/agent/systemd/sssds-agent.service" /etc/systemd/system/
-install -m 0644 "${INSTALL_DIR}/agent/systemd/sssds-vlc.service"   /etc/systemd/system/
-install -m 0644 "${INSTALL_DIR}/agent/systemd/sssds-wol.service"   /etc/systemd/system/
+substitute() {
+  sed -e "s|__NODE_USER__|${NODE_USER}|g" \
+      -e "s|__NODE_HOME__|${NODE_HOME}|g" \
+      "$1" > "$2"
+  chmod 0644 "$2"
+  chown root:root "$2"
+}
+substitute "${INSTALL_DIR}/agent/systemd/sssds-agent.service" /etc/systemd/system/sssds-agent.service
+substitute "${INSTALL_DIR}/agent/systemd/sssds-vlc.service"   /etc/systemd/system/sssds-vlc.service
+install -m 0644 "${INSTALL_DIR}/agent/systemd/sssds-wol.service" /etc/systemd/system/
+
+# Shutdown-time WoL persistence — this is the fix for "wake didn't work
+# after I shut down" on Mac mini-class hardware.
+install -m 0755 "${INSTALL_DIR}/agent/wol-shutdown.sh" \
+                /lib/systemd/system-shutdown/sssds-wol-persist
+
 systemctl daemon-reload
 
 # ---------------------------------------------------------------------------
-# 8. display-manager auto-login
-#    Lubuntu ships SDDM by default since 18.10. We also handle LightDM
-#    in case someone swapped the DM out.
+# 8. auto-login for the current user
+#    Lubuntu's default DM is SDDM; we also handle LightDM if someone
+#    swapped it out. If the user already has auto-login configured a
+#    different way, our drop-in just overrides it (you can remove our
+#    file to revert).
 # ---------------------------------------------------------------------------
 configure_autologin() {
   local sess
-  # Pick the first available xsession; lxqt is the Lubuntu default.
   for candidate in lxqt LXQt openbox lubuntu; do
     if [[ -f /usr/share/xsessions/${candidate}.desktop ]]; then
-      sess="${candidate}"
-      break
+      sess="${candidate}"; break
     fi
   done
   if [[ -z "${sess:-}" ]]; then
     sess="$(basename -s .desktop "$(ls /usr/share/xsessions/*.desktop 2>/dev/null | head -1)" 2>/dev/null || true)"
   fi
   if [[ -z "${sess:-}" ]]; then
-    echo "  warning: no xsession found; auto-login session left blank"
-    sess=""
+    echo "  warning: no xsession found; skipping auto-login config"
+    return
   fi
 
   if dpkg -l sddm 2>/dev/null | grep -q '^ii'; then
-    echo "==> configuring SDDM auto-login as sssds (session=${sess})"
+    echo "==> configuring SDDM auto-login as ${NODE_USER} (session=${sess})"
     mkdir -p /etc/sddm.conf.d
     cat > /etc/sddm.conf.d/10-sssds-autologin.conf <<EOF
 [Autologin]
-User=sssds
+User=${NODE_USER}
 Session=${sess}.desktop
 EOF
   elif dpkg -l lightdm 2>/dev/null | grep -q '^ii'; then
-    echo "==> configuring LightDM auto-login as sssds"
+    echo "==> configuring LightDM auto-login as ${NODE_USER}"
     mkdir -p /etc/lightdm/lightdm.conf.d
     cat > /etc/lightdm/lightdm.conf.d/12-sssds-autologin.conf <<EOF
 [Seat:*]
-autologin-user=sssds
+autologin-user=${NODE_USER}
 autologin-user-timeout=0
 autologin-session=${sess}
 EOF
   else
-    echo "  warning: no SDDM or LightDM detected; configure auto-login manually"
+    echo "  warning: no SDDM or LightDM detected; auto-login left as-is"
   fi
 }
 configure_autologin
@@ -212,24 +221,23 @@ systemctl enable --now sssds-agent.service
 
 if [[ -n "${VIDEO_PATH}" ]]; then
   if [[ ! -f "${VIDEO_PATH}" ]]; then
-    echo "  warning: VIDEO_PATH ${VIDEO_PATH} does not exist yet; service enabled but it will fail until the file is in place"
+    echo "  warning: VIDEO_PATH ${VIDEO_PATH} doesn't exist yet; service enabled but it will fail until the file is in place"
   fi
   systemctl enable sssds-vlc.service
-  # Restart so config changes (or first-time start) take effect; safe whether
-  # the unit was already running or not.
   systemctl restart sssds-vlc.service || true
 else
   echo "  no VIDEO_PATH given — sssds-vlc.service installed but disabled."
-  echo "  Re-run this script with the video path as the 5th argument when ready."
 fi
 
 cat <<EOF
 
 Done. Node identity: zone-${ZONE}-node-${NODE}
-Auto-login is configured; reboot to verify the kiosk session comes up.
+Running as user: ${NODE_USER}
 
 Useful commands:
-    journalctl -u sssds-agent -f
-    journalctl -u sssds-vlc -n 50
+    sudo journalctl -u sssds-agent -f
+    sudo journalctl -u sssds-vlc -n 50
     systemctl status sssds-vlc
+
+Reboot recommended so auto-login picks up the new config.
 EOF

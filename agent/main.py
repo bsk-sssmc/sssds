@@ -158,12 +158,28 @@ async def session(cfg: dict) -> None:
                 cid = msg.get("command_id", "")
                 kind = msg.get("kind", "")
                 log.info("command id=%s kind=%s", cid, kind)
-                ok, detail = await dispatch(kind)
-                ack = Ack(command_id=cid, ok=ok, detail=detail)
-                try:
-                    await ws.send(ack.model_dump_json())
-                except ConnectionClosed:
-                    return
+
+                if kind in ("shutdown", "restart"):
+                    # The system is about to disappear, so a real ack
+                    # may not survive the WS being torn down. Ack first
+                    # ("scheduled") and run the command in the
+                    # background. The dashboard sees the node go
+                    # offline as the actual confirmation.
+                    try:
+                        await ws.send(Ack(
+                            command_id=cid, ok=True, detail="scheduled",
+                        ).model_dump_json())
+                    except ConnectionClosed:
+                        return
+                    asyncio.create_task(dispatch(kind))
+                else:
+                    ok, detail = await dispatch(kind)
+                    try:
+                        await ws.send(Ack(
+                            command_id=cid, ok=ok, detail=detail,
+                        ).model_dump_json())
+                    except ConnectionClosed:
+                        return
 
         # Both tasks must run until the WS dies; whichever ends first
         # cancels the other.

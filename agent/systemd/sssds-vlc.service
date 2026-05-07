@@ -5,12 +5,12 @@ After=graphical.target sssds-agent.service
 PartOf=graphical.target
 
 [Service]
+# __NODE_USER__ is substituted by provision-node.sh.
 Type=simple
-User=sssds
-Group=sssds
+User=__NODE_USER__
 # All node-specific knobs (VIDEO_PATH, FULLSCREEN, etc.) come from here.
-# The leading dash means "ok if missing" so the unit still loads on a
-# half-provisioned box.
+# Leading dash = "ok if missing" so the unit still loads on a half-set-up
+# box. The wrapper sources this file too, so manual runs work the same.
 EnvironmentFile=-/etc/sssds/identity.conf
 Environment=DISPLAY=:0
 WorkingDirectory=/opt/sssds/VLC
