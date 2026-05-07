@@ -162,16 +162,19 @@ async def session(cfg: dict) -> None:
                 if kind in ("shutdown", "restart"):
                     # The system is about to disappear, so a real ack
                     # may not survive the WS being torn down. Ack first
-                    # ("scheduled") and run the command in the
-                    # background. The dashboard sees the node go
-                    # offline as the actual confirmation.
+                    # ("scheduled") then await dispatch inline. We do
+                    # NOT use create_task here: a fire-and-forget task
+                    # can be cancelled before it starts if the receive
+                    # loop unwinds, which is how we lost a few reboots.
                     try:
                         await ws.send(Ack(
                             command_id=cid, ok=True, detail="scheduled",
                         ).model_dump_json())
                     except ConnectionClosed:
-                        return
-                    asyncio.create_task(dispatch(kind))
+                        pass
+                    # shutdown(8) returns immediately after signalling
+                    # systemd, so this doesn't really block.
+                    await dispatch(kind)
                 else:
                     ok, detail = await dispatch(kind)
                     try:

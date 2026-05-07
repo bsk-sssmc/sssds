@@ -19,10 +19,13 @@ WorkingDirectory=/opt/sssds/VLC
 # managers don't agree on where the cookie lives), then execs Python.
 ExecStart=/opt/sssds/agent/start-vlc.sh
 
-Restart=on-failure
+# Always restart — kiosk mode: if the player exits for any reason,
+# bring it back. The StartLimit is intentionally generous so a brief
+# X hiccup at boot can't permanently stop playback.
+Restart=always
 RestartSec=5
-StartLimitIntervalSec=300
-StartLimitBurst=5
+StartLimitIntervalSec=600
+StartLimitBurst=20
 
 [Install]
 WantedBy=graphical.target

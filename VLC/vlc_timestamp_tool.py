@@ -94,7 +94,14 @@ def format_timestamp(ms: int) -> str:
 
 
 def build_player() -> tuple[vlc.Instance, vlc.MediaPlayer]:
-    instance = vlc.Instance("--no-video-title-show", "--quiet")
+    # input-repeat=65535 = effectively infinite; libvlc has no real
+    # "loop forever" flag. Combined with Restart=always on the systemd
+    # unit, the video plays continuously even if libvlc somehow exits.
+    instance = vlc.Instance(
+        "--no-video-title-show",
+        "--quiet",
+        "--input-repeat=65535",
+    )
     if instance is None:
         raise RuntimeError("Failed to create VLC instance. Is libVLC installed?")
     player = instance.media_player_new()
@@ -389,7 +396,21 @@ def run_tk(controller: Controller, fullscreen: bool, enter_captures: bool) -> in
         controller.player.set_xwindow(handle)
 
     if fullscreen:
+        # Belt-and-braces kiosk-mode fullscreen:
+        #   overrideredirect: WM stops managing this window entirely (no
+        #     decorations, doesn't get stacked under panels)
+        #   explicit screen geometry: covers every pixel
+        #   -topmost: even if the WM ignores overrideredirect, stay on
+        #     top of any LXQt panel
+        screen_w = root.winfo_screenwidth()
+        screen_h = root.winfo_screenheight()
+        root.overrideredirect(True)
+        root.geometry(f"{screen_w}x{screen_h}+0+0")
         root.attributes("-fullscreen", True)
+        root.attributes("-topmost", True)
+        root.update_idletasks()
+        root.lift()
+        root.focus_force()
     video_frame.configure(cursor="none")
 
     def quit_app() -> None:
