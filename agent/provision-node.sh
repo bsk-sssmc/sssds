@@ -74,6 +74,7 @@ echo "==> installing apt dependencies"
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
   python3 python3-venv python3-pip \
+  python3-tk \
   ethtool iproute2 \
   vlc python3-vlc \
   x11-xserver-utils \
