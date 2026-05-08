@@ -20,12 +20,15 @@ WorkingDirectory=/opt/sssds/VLC
 ExecStart=/opt/sssds/agent/start-vlc.sh
 
 # Always restart — kiosk mode: if the player exits for any reason,
-# bring it back. The StartLimit is intentionally generous so a brief
-# X hiccup at boot can't permanently stop playback.
+# bring it back. We disable systemd's start-rate limiter outright:
+# legitimate kiosk operation (hitting Restart-video repeatedly, the
+# operator stopping/starting via the dashboard, the video ending and
+# looping) racks up start counts that have no business being treated
+# as "this unit is broken, give up." For real failures we still rely
+# on the operator noticing the screen is wrong.
 Restart=always
 RestartSec=5
-StartLimitIntervalSec=600
-StartLimitBurst=20
+StartLimitIntervalSec=0
 
 [Install]
 WantedBy=graphical.target

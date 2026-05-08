@@ -100,7 +100,10 @@ def collect_heartbeat() -> Heartbeat:
         cpu_percent=psutil.cpu_percent(interval=None),
         mem_percent=psutil.virtual_memory().percent,
         disk_percent=psutil.disk_usage("/").percent,
-        # Slice 2 will populate cpu_temp_c, net_signal_dbm, video_playing.
+        # is the kiosk unit currently active? Lets the dashboard show
+        # the right Pause/Resume button without extra round-trips.
+        video_playing=plat.video_active(),
+        # Slice 2 will populate cpu_temp_c, net_signal_dbm.
     )
 
 
@@ -115,6 +118,10 @@ async def dispatch(kind: str) -> tuple[bool, str]:
         return await plat.restart()
     if kind == "restart_video":
         return await plat.restart_video()
+    if kind == "pause_kiosk":
+        return await plat.pause_kiosk()
+    if kind == "resume_kiosk":
+        return await plat.resume_kiosk()
     return False, f"unknown command: {kind}"
 
 

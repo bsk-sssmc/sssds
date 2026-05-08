@@ -64,7 +64,13 @@ AgentMessage = Union[Register, Heartbeat, Ack]
 # dashboard -> agent
 # ---------------------------------------------------------------------------
 
-CommandKind = Literal["shutdown", "restart", "restart_video"]
+CommandKind = Literal[
+    "shutdown",
+    "restart",
+    "restart_video",
+    "pause_kiosk",
+    "resume_kiosk",
+]
 
 
 class Command(BaseModel):

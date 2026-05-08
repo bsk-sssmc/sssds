@@ -194,6 +194,16 @@ async def restart_video(key: str):
     return await _send(key, "restart_video")
 
 
+@app.post("/api/nodes/{key}/pause", dependencies=[Depends(require_admin)])
+async def pause_kiosk(key: str):
+    return await _send(key, "pause_kiosk")
+
+
+@app.post("/api/nodes/{key}/resume", dependencies=[Depends(require_admin)])
+async def resume_kiosk(key: str):
+    return await _send(key, "resume_kiosk")
+
+
 async def _send(key: str, kind):
     if db.get_node(CFG.db_path, key) is None:
         raise HTTPException(404, "unknown node")
@@ -304,6 +314,17 @@ def _node_view_models() -> list[dict]:
             state = "offline"
         else:
             state = "stale"
+
+        # Pull the latest video state out of the heartbeat blob so the
+        # template can pick the right Pause/Resume button.
+        video_playing = None
+        raw_hb = n.get("last_heartbeat")
+        if raw_hb:
+            try:
+                video_playing = json.loads(raw_hb).get("video_playing")
+            except Exception:
+                video_playing = None
+
         out.append({
             "key": n["key"],
             "zone": n["zone"],
@@ -314,6 +335,7 @@ def _node_view_models() -> list[dict]:
             "last_seen": last_seen,
             "last_seen_human": _humanize_age(now - last_seen) if last_seen else "never",
             "state": state,
+            "video_playing": video_playing,
         })
     return out
 

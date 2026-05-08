@@ -140,6 +140,8 @@ cat > "${TMP_SUDOERS}" <<EOF
 ${NODE_USER} ALL=(root) NOPASSWD: /sbin/shutdown -h now, /usr/sbin/shutdown -h now
 ${NODE_USER} ALL=(root) NOPASSWD: /sbin/shutdown -r now, /usr/sbin/shutdown -r now
 ${NODE_USER} ALL=(root) NOPASSWD: /bin/systemctl restart sssds-vlc.service, /usr/bin/systemctl restart sssds-vlc.service
+${NODE_USER} ALL=(root) NOPASSWD: /bin/systemctl stop sssds-vlc.service, /usr/bin/systemctl stop sssds-vlc.service
+${NODE_USER} ALL=(root) NOPASSWD: /bin/systemctl start sssds-vlc.service, /usr/bin/systemctl start sssds-vlc.service
 EOF
 chmod 0440 "${TMP_SUDOERS}"
 chown root:root "${TMP_SUDOERS}"

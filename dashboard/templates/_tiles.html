@@ -24,6 +24,18 @@
               hx-swap="none"
               hx-confirm="Restart the video on {{ n.key }}?"
               {% if n.state != "online" %}disabled{% endif %}>Restart video</button>
+      {% if n.video_playing is sameas false %}
+      <button class="resume span"
+              hx-post="/api/nodes/{{ n.key }}/resume"
+              hx-swap="none"
+              {% if n.state != "online" %}disabled{% endif %}>Resume kiosk</button>
+      {% else %}
+      <button class="pause span"
+              hx-post="/api/nodes/{{ n.key }}/pause"
+              hx-swap="none"
+              hx-confirm="Pause the kiosk on {{ n.key }}? The video will stop until you Resume."
+              {% if n.state != "online" %}disabled{% endif %}>Pause kiosk</button>
+      {% endif %}
       <button
               hx-post="/api/nodes/{{ n.key }}/restart"
               hx-swap="none"

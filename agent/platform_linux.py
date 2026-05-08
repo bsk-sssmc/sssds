@@ -98,3 +98,25 @@ async def restart_video() -> tuple[bool, str]:
     # /usr/bin/systemctl is the real binary on every modern Ubuntu/Lubuntu;
     # sudoers also accepts /bin/systemctl for older layouts.
     return await _run("sudo", "-n", "/usr/bin/systemctl", "restart", VLC_UNIT)
+
+
+async def pause_kiosk() -> tuple[bool, str]:
+    # `stop` is intentional from systemd's perspective, so Restart=always
+    # does NOT fire — the unit stays stopped until we explicitly resume.
+    return await _run("sudo", "-n", "/usr/bin/systemctl", "stop", VLC_UNIT)
+
+
+async def resume_kiosk() -> tuple[bool, str]:
+    return await _run("sudo", "-n", "/usr/bin/systemctl", "start", VLC_UNIT)
+
+
+def video_active() -> bool:
+    """Synchronous probe — used inside heartbeat collection."""
+    try:
+        result = subprocess.run(
+            ["/usr/bin/systemctl", "is-active", "--quiet", VLC_UNIT],
+            timeout=2,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
