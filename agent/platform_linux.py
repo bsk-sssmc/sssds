@@ -110,13 +110,24 @@ async def resume_kiosk() -> tuple[bool, str]:
     return await _run("sudo", "-n", "/usr/bin/systemctl", "start", VLC_UNIT)
 
 
-def video_active() -> bool:
-    """Synchronous probe — used inside heartbeat collection."""
+async def video_active() -> bool:
+    """Async probe so the asyncio event loop isn't frozen while we wait
+    for systemctl. Synchronous subprocess.run here would block the WS
+    keepalive and cause the dashboard to think the agent is gone."""
     try:
-        result = subprocess.run(
-            ["/usr/bin/systemctl", "is-active", "--quiet", VLC_UNIT],
-            timeout=2,
+        proc = await asyncio.create_subprocess_exec(
+            "/usr/bin/systemctl", "is-active", "--quiet", VLC_UNIT,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
         )
-        return result.returncode == 0
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=2.0)
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            return False
+        return proc.returncode == 0
     except Exception:
         return False

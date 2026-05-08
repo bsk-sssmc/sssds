@@ -94,7 +94,7 @@ def _uptime_seconds() -> int:
         return 0
 
 
-def collect_heartbeat() -> Heartbeat:
+async def collect_heartbeat() -> Heartbeat:
     return Heartbeat(
         uptime_seconds=_uptime_seconds(),
         cpu_percent=psutil.cpu_percent(interval=None),
@@ -102,7 +102,7 @@ def collect_heartbeat() -> Heartbeat:
         disk_percent=psutil.disk_usage("/").percent,
         # is the kiosk unit currently active? Lets the dashboard show
         # the right Pause/Resume button without extra round-trips.
-        video_playing=plat.video_active(),
+        video_playing=await plat.video_active(),
         # Slice 2 will populate cpu_temp_c, net_signal_dbm.
     )
 
@@ -148,9 +148,17 @@ async def session(cfg: dict) -> None:
         log.info("registered")
 
         async def heartbeat_loop() -> None:
+            # We isolate heartbeat collection failures so a flaky probe
+            # (e.g. a transient systemctl hiccup) can't tear down the
+            # whole WebSocket session.
             while True:
-                hb = collect_heartbeat()
-                await ws.send(hb.model_dump_json())
+                try:
+                    hb = await collect_heartbeat()
+                    await ws.send(hb.model_dump_json())
+                except ConnectionClosed:
+                    raise
+                except Exception:
+                    log.exception("heartbeat collection failed; skipping tick")
                 await asyncio.sleep(HEARTBEAT_EVERY)
 
         async def receive_loop() -> None:
