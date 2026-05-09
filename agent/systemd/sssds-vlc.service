@@ -27,8 +27,14 @@ ExecStart=/opt/sssds/agent/start-vlc.sh
 # as "this unit is broken, give up." For real failures we still rely
 # on the operator noticing the screen is wrong.
 Restart=always
-RestartSec=5
+RestartSec=2
 StartLimitIntervalSec=0
+
+# Cap how long we wait for VLC to clean up on stop. libvlc occasionally
+# hangs a few seconds releasing X resources during shutdown — the
+# default 90s timeout makes Restart-video feel broken. After this
+# window systemd SIGKILLs.
+TimeoutStopSec=3
 
 [Install]
 WantedBy=graphical.target

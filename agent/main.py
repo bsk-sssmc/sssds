@@ -111,6 +111,18 @@ async def collect_heartbeat() -> Heartbeat:
 # command dispatch
 # ---------------------------------------------------------------------------
 
+async def _dispatch_silent(kind: str) -> None:
+    """Run a kiosk-only command without echoing the result back over the
+    WS. We've already sent a `scheduled` ack; the heartbeat carries the
+    eventual ground truth via video_playing."""
+    try:
+        ok, detail = await dispatch(kind)
+        if not ok:
+            log.warning("background %s dispatch failed: %s", kind, detail)
+    except Exception:
+        log.exception("background %s dispatch crashed", kind)
+
+
 async def dispatch(kind: str) -> tuple[bool, str]:
     if kind == "shutdown":
         return await plat.shutdown()
@@ -187,9 +199,22 @@ async def session(cfg: dict) -> None:
                         ).model_dump_json())
                     except ConnectionClosed:
                         pass
-                    # shutdown(8) returns immediately after signalling
-                    # systemd, so this doesn't really block.
                     await dispatch(kind)
+                elif kind in ("restart_video", "pause_kiosk", "resume_kiosk"):
+                    # These don't take down the system, but the stop
+                    # phase of `systemctl restart/stop` can take a few
+                    # seconds. Ack immediately and run the actual call
+                    # in the background, so subsequent commands (a user
+                    # clicking Shutdown right after) aren't queued
+                    # behind it. The dashboard learns the real outcome
+                    # from the next heartbeat.
+                    try:
+                        await ws.send(Ack(
+                            command_id=cid, ok=True, detail="scheduled",
+                        ).model_dump_json())
+                    except ConnectionClosed:
+                        pass
+                    asyncio.create_task(_dispatch_silent(kind))
                 else:
                     ok, detail = await dispatch(kind)
                     try:
