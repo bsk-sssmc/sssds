@@ -1,6 +1,0 @@
-python-vlc==3.0.20123
-
-# macOS only: needed to host libvlc's video output in a real NSView.
-# Safely no-ops on Linux/Windows (won't be installed because of the marker).
-pyobjc-core; sys_platform == "darwin"
-pyobjc-framework-Cocoa; sys_platform == "darwin"

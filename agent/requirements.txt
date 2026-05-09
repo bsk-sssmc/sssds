@@ -1,4 +1,0 @@
-websockets>=13
-psutil>=5.9
-pydantic>=2.7
-eval_type_backport>=0.2; python_version < "3.10"
